@@ -152,6 +152,13 @@ function LoginScreen({ onLogin }: { onLogin: (name: string, email: string) => vo
           <button type="submit" className="login-submit">
             {tab === "login" ? "Entrar" : "Crear cuenta"}
           </button>
+          <button
+            type="button"
+            className="login-guest"
+            onClick={() => onLogin("Invitado", "invitado@kabbalah.app")}
+          >
+            Continuar sin cuenta
+          </button>
         </form>
       </div>
     </div>

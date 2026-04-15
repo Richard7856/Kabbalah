@@ -747,6 +747,23 @@ body::after {
   border-color: var(--gold);
 }
 
+.login-guest {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-cinzel), 'Cinzel', serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 0.4rem;
+  cursor: pointer;
+  transition: color 0.2s;
+  text-align: center;
+  width: 100%;
+  opacity: 0.6;
+}
+.login-guest:hover { color: var(--gold-dim); opacity: 1; }
+
 /* ── Print styles ───────────────────────────────────────────────────────────── */
 @media print {
   html, body { overflow: visible; height: auto; background: white; color: black; }
