@@ -4,10 +4,46 @@ import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import InlineImage from "@/components/InlineImage";
 import StarOfDavid from "@/components/StarOfDavid";
+import AnalysisForm, { FormData } from "@/components/AnalysisForm";
+import AnalysisResult from "@/components/AnalysisResult";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+type Mode = "chat" | "form";
+type FormPhase = "form" | "loading" | "result";
 type Message = { role: "user" | "assistant"; content: string };
 type Session = { id: string; title: string; created: string; messages: Message[] };
+
+// Converts FormData into a plain-text user message for the API.
+// Mirrors what the old form-based route used to build server-side.
+function formDataToMessage(data: FormData): string {
+  function fmt(dateStr: string) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("es-MX", {
+      timeZone: "UTC", year: "numeric", month: "long", day: "numeric",
+    });
+  }
+
+  let msg = `Realiza el análisis cabalístico completo para:\n\n`;
+  msg += `**Nombre:** ${data.name.trim()}\n`;
+  msg += `**Fecha de nacimiento:** ${fmt(data.birthDate)}\n`;
+  if (data.birthTime)  msg += `**Hora de nacimiento:** ${data.birthTime}\n`;
+  if (data.birthCity)  msg += `**Ciudad/País:** ${data.birthCity.trim()}\n`;
+  if (data.gender)     msg += `**Género:** ${data.gender}\n`;
+  if (data.fatherName) msg += `**Nombre del padre:** ${data.fatherName.trim()}\n`;
+  if (data.context?.trim()) msg += `**Contexto / pregunta:** ${data.context.trim()}\n`;
+
+  if (data.secondName?.trim() && data.secondBirthDate) {
+    msg += `\n---\n\n**Segunda persona:**\n`;
+    msg += `**Nombre:** ${data.secondName.trim()}\n`;
+    msg += `**Fecha de nacimiento:** ${fmt(data.secondBirthDate)}\n`;
+    if (data.secondBirthTime) msg += `**Hora:** ${data.secondBirthTime}\n`;
+    if (data.secondBirthCity) msg += `**Ciudad/País:** ${data.secondBirthCity.trim()}\n`;
+    if (data.secondGender)    msg += `**Género:** ${data.secondGender}\n`;
+    msg += `\nIncluye análisis completo de ambas personas y la sección de Análisis de Interacción.`;
+  }
+
+  return msg;
+}
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const KEY_USER = "kabbalah_current_user";
@@ -168,14 +204,24 @@ function LoginScreen({ onLogin }: { onLogin: (name: string, email: string) => vo
 // ── Main page ──────────────────────────────────────────────────────────────────
 export default function Home() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [mode, setMode] = useState<Mode>("chat");
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
+
+  // ── Chat mode state ──
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamText, setStreamText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");
+
+  // ── Form mode state ──
+  const [formPhase, setFormPhase] = useState<FormPhase>("form");
+  const [formAnalysis, setFormAnalysis] = useState("");
+  const [formStreaming, setFormStreaming] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
   const chatRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -280,6 +326,43 @@ export default function Home() {
     setSessions([]);
     setMessages([]);
     setCurrentId(null);
+  }
+
+  // ── Form mode submit ──────────────────────────────────────────────────────────
+  async function handleFormSubmit(data: FormData) {
+    setFormPhase("loading");
+    setFormAnalysis("");
+    setFormError(null);
+    setFormStreaming(true);
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "user", content: formDataToMessage(data) }] }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Error desconocido" }));
+        throw new Error(err.error);
+      }
+
+      setFormPhase("result");
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let full = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        full += decoder.decode(value, { stream: true });
+        setFormAnalysis(full);
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Error desconocido");
+      setFormPhase("form");
+    } finally {
+      setFormStreaming(false);
+    }
   }
 
   // ── Chat ─────────────────────────────────────────────────────────────────────
@@ -417,25 +500,75 @@ export default function Home() {
         {/* Header */}
         <div className="main-header">
           <div className="main-header-left">
-            <span className="session-title-display">
-              {currentSession?.title ?? "Nueva lectura"}
-            </span>
+            {mode === "chat" ? (
+              <span className="session-title-display">
+                {currentSession?.title ?? "Nueva lectura"}
+              </span>
+            ) : (
+              <span className="session-title-display">Análisis por Formulario</span>
+            )}
           </div>
           <div className="header-actions">
-            <button className="header-btn" onClick={() => doCreateSession(userEmail, sessions)}>
-              + Nueva
-            </button>
+            {/* Mode toggle */}
+            <div className="mode-toggle">
+              <button
+                className={`mode-btn${mode === "chat" ? " active" : ""}`}
+                onClick={() => setMode("chat")}
+              >
+                💬 Chat
+              </button>
+              <button
+                className={`mode-btn${mode === "form" ? " active" : ""}`}
+                onClick={() => { setMode("form"); setFormPhase("form"); setFormAnalysis(""); setFormError(null); }}
+              >
+                📋 Formulario
+              </button>
+            </div>
+            {mode === "chat" && (
+              <button className="header-btn" onClick={() => doCreateSession(userEmail, sessions)}>
+                + Nueva
+              </button>
+            )}
             <button
               className="header-btn pdf-btn"
               onClick={() => window.print()}
-              disabled={messages.length === 0}
+              disabled={mode === "chat" ? messages.length === 0 : formPhase !== "result"}
             >
               Imprimir
             </button>
           </div>
         </div>
 
-        {/* Chat body */}
+        {/* ── Form mode ── */}
+        {mode === "form" && (
+          <div className="form-mode-body">
+            {formError && (
+              <div className="form-error-banner">{formError}</div>
+            )}
+            {formPhase === "form" && (
+              <AnalysisForm onSubmit={handleFormSubmit} />
+            )}
+            {formPhase === "loading" && (
+              <div className="form-loading">
+                <div style={{ animation: "spin 8s linear infinite", display: "inline-block" }}>
+                  <StarOfDavid size={44} />
+                </div>
+                <p className="form-loading-text">Consultando las letras...</p>
+              </div>
+            )}
+            {formPhase === "result" && (
+              <AnalysisResult
+                analysis={formAnalysis}
+                isStreaming={formStreaming}
+                onReset={() => { setFormPhase("form"); setFormAnalysis(""); }}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Chat body + input */}
+        {mode === "chat" && (
+        <>
         <div className="chat-body" ref={chatRef}>
           {messages.length === 0 && !isStreaming && (
             <div className="welcome-screen">
@@ -507,6 +640,8 @@ export default function Home() {
           </div>
           <p className="input-hint">Ctrl + Enter para enviar</p>
         </div>
+        </>
+        )}
       </main>
     </div>
   );
